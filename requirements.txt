@@ -1,0 +1,13 @@
+wget
+timm
+torch
+tensorflow
+moviepy
+librosa
+ffmpeg
+albumentations
+opencv-python
+torchsummary
+onnx
+onnx2pytorch
+gradio
