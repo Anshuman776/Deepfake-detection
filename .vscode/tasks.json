@@ -1,0 +1,72 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "crosscheck-probe",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"crosscheck.py",
+				"--probe"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "py-ok",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"-c",
+				"print('ok')"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "run-ml-service",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"ml_service.py"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "run-backend-service",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"app.py"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "run-frontend-service",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"start_frontend.bat"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "probe-now",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"crosscheck.py",
+				"--probe"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "restart-backend-api",
+			"type": "shell",
+			"command": "c:/Users/v/.gemini/antigravity/scratch/fakevideodetect/.venv/Scripts/python.exe",
+			"args": [
+				"app.py"
+			],
+			"isBackground": true
+		}
+	]
+}

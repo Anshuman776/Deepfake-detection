@@ -1,0 +1,19 @@
+Loading ML models... (this may take a minute)
+Traceback (most recent call last):
+  File "C:\Users\v\.gemini\antigravity\scratch\fakevideodetect\ml_service.py", line 25, in <module>
+    import inference_2 as inference
+  File "C:\Users\v\.gemini\antigravity\scratch\fakevideodetect\inference_2.py", line 14, in <module>
+    pytorch_model = ConvertModel(onnx_model)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\v\AppData\Roaming\Python\Python312\site-packages\onnx2pytorch\convert\model.py", line 121, in __init__
+    for op_id, op_name, op in convert_operations(
+                              ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\v\AppData\Roaming\Python\Python312\site-packages\onnx2pytorch\convert\operations.py", line 105, in convert_operations
+    op = convert_layer(node, "Conv", params)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\v\AppData\Roaming\Python\Python312\site-packages\onnx2pytorch\convert\layer.py", line 89, in convert_layer
+    load_params(layer, weight, bias)
+  File "C:\Users\v\AppData\Roaming\Python\Python312\site-packages\onnx2pytorch\convert\layer.py", line 32, in load_params
+    layer.weight.data = torch.tensor(numpy_helper.to_array(weight))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Temp / upload dirs
+tmp/
+tmp_ml/
+uploads/
+audios/
+images/
+videos/
+
+# Model checkpoints (large binaries)
+checkpoints/*.pth
+checkpoints/*.onnx
+checkpoints/*.h5
+
+# Node
+node_modules/
+
+# Build output
+dist/
+frontend_truelens/dist/

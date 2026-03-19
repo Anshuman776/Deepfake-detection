@@ -1,11 +1,17 @@
 import os
 import cv2
+import onnx
 import torch
 import argparse
 import numpy as np
 import torch.nn as nn
 from models.TMC import ETMC
 from models import image
+
+from onnx2pytorch import ConvertModel
+
+onnx_model = onnx.load('checkpoints/efficientnet.onnx')
+pytorch_model = ConvertModel(onnx_model)
 
 #Set random seed for reproducibility.
 torch.manual_seed(42)
@@ -21,6 +27,7 @@ audio_args = {
     'nb_fc_node': 1024,
     'gru_node': 1024,
     'nb_gru_layer': 3,
+    'nb_classes': 2
 }
 
 
@@ -49,11 +56,12 @@ def get_args(parser):
     parser.add_argument("--n_classes", type=int, default=2)
     parser.add_argument("--annealing_epoch", type=int, default=10)
     parser.add_argument("--device", type=str, default='cpu')
-    parser.add_argument("--pretrained_image_encoder", type=bool, default = False)
-    parser.add_argument("--freeze_image_encoder", type=bool, default = False)
-    parser.add_argument("--pretrained_audio_encoder", type = bool, default=False)
-    parser.add_argument("--freeze_audio_encoder", type = bool, default = False)
-    parser.add_argument("--augment_dataset", type = bool, default = True)
+
+    parser.add_argument("--pretrained_image_encoder", action="store_true")
+    parser.add_argument("--freeze_image_encoder", action="store_true")
+    parser.add_argument("--pretrained_audio_encoder", action="store_true")
+    parser.add_argument("--freeze_audio_encoder", action="store_true")
+    parser.add_argument("--augment_dataset", action="store_true")
 
     for key, value in audio_args.items():
         parser.add_argument(f"--{key}", type=type(value), default=value)
@@ -68,144 +76,153 @@ def model_summary(args):
 def load_multimodal_model(args):
     '''Load multimodal model'''
     model = ETMC(args)
-    ckpt = torch.load('checkpoints/model_best.pt', map_location = torch.device('cpu'))
-    model.load_state_dict(ckpt,strict = False)
+    ckpt = torch.load('checkpoints/model.pth', map_location = torch.device('cpu'))
+    model.load_state_dict(ckpt, strict = True)
     model.eval()
     return model
 
 def load_img_modality_model(args):
     '''Loads image modality model.'''
-    rgb_encoder = image.ImageEncoder(args)
-    ckpt = torch.load('checkpoints/model_best.pt', map_location = torch.device('cpu'))
-    rgb_encoder.load_state_dict(ckpt,strict = False)
+    rgb_encoder = pytorch_model
+
+    ckpt = torch.load('checkpoints/model.pth', map_location = torch.device('cpu'))
+    rgb_encoder.load_state_dict(ckpt['rgb_encoder'], strict = True)
     rgb_encoder.eval()
     return rgb_encoder
 
 def load_spec_modality_model(args):
     spec_encoder = image.RawNet(args)
-    ckpt = torch.load('checkpoints/model_best.pt', map_location = torch.device('cpu'))
-    spec_encoder.load_state_dict(ckpt,strict = False)
+    ckpt = torch.load('checkpoints/model.pth', map_location = torch.device('cpu'))
+    spec_encoder.load_state_dict(ckpt['spec_encoder'], strict = True)
     spec_encoder.eval()
     return spec_encoder
 
 
 #Load models.
-parser = argparse.ArgumentParser(description="Train Models")
+parser = argparse.ArgumentParser(description="Inference models")
 get_args(parser)
-args, remaining_args = parser.parse_known_args()
-assert remaining_args == [], remaining_args
+args, remaining_args = parser.parse_known_args([])
 
-multimodal = load_multimodal_model(args)
 spec_model = load_spec_modality_model(args)
+
 img_model = load_img_modality_model(args)
 
 
 def preprocess_img(face):
     face = face / 255
     face = cv2.resize(face, (256, 256))
-    face = face.transpose(2, 0, 1) #(W, H, C) -> (C, W, H)
+    # face = face.transpose(2, 0, 1) #(W, H, C) -> (C, W, H)
     face_pt = torch.unsqueeze(torch.Tensor(face), dim = 0) 
     return face_pt
 
-def preprocess_audio(audio_file):
-    audio_pt = torch.unsqueeze(torch.Tensor(audio_file), dim = 0)
+import soundfile as sf
+
+def preprocess_audio(audio_file_path):
+    data, samplerate = sf.read(audio_file_path)
+    # the original code expected a tuple, but just used the data array directly
+    audio_pt = torch.unsqueeze(torch.Tensor(data), dim = 0)
     return audio_pt
 
-def deepfakes_spec_predict(input_audio):
-    x, _ = input_audio
-    audio = preprocess_audio(x)
+def deepfakes_spec_predict(input_audio_path):
+    # Old Gradio gave tuple: x, _ = input_audio. New version takes path
+    audio = preprocess_audio(input_audio_path)
     spec_grads = spec_model.forward(audio)
-    multimodal_grads = multimodal.spec_depth[0].forward(spec_grads)
+    spec_grads_inv = np.exp(spec_grads.cpu().detach().numpy().squeeze())
 
-    out = nn.Softmax()(multimodal_grads)
-    max = torch.argmax(out, dim = -1) #Index of the max value in the tensor.
-    max_value = out[max] #Actual value of the tensor.
-    max_value = np.argmax(out[max].detach().numpy())
+    max_value = np.argmax(spec_grads_inv)
 
     if max_value > 0.5:
-        preds = round(100 - (max_value*100), 3)
-        text2 = f"The audio is REAL."
-
+        preds = round(100 - float(max_value) * 100, 3)
+        return {"label": "REAL", "confidence": preds}
     else:
-        preds = round(max_value*100, 3)
-        text2 = f"The audio is FAKE."
+        preds = round(float(max_value) * 100, 3)
+        return {"label": "FAKE", "confidence": preds}
 
-    return text2
-
-def deepfakes_image_predict(input_image):
-    face = preprocess_img(input_image)
-
+def deepfakes_image_predict(input_image_path):
+    # Old Gradio gave numpy array directly. Now read from path.
+    img = cv2.imread(input_image_path)
+    if img is None:
+        return {"error": "Failed to read image"}
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    face = preprocess_img(img)
+    print(f"Face shape is: {face.shape}")
     img_grads = img_model.forward(face)
-    multimodal_grads = multimodal.clf_rgb[0].forward(img_grads)
+    img_grads = img_grads.cpu().detach().numpy()
+    img_grads_np = np.squeeze(img_grads)
 
-    out = nn.Softmax()(multimodal_grads)
-    max = torch.argmax(out, dim=-1) #Index of the max value in the tensor.
-    max = max.cpu().detach().numpy()
-    max_value = out[max] #Actual value of the tensor.
-    max_value = np.argmax(out[max].detach().numpy())
-
-    if max_value > 0.5:
-        preds = round(100 - (max_value*100), 3)
-        text2 = f"The image is REAL."
-
+    if img_grads_np[0] > 0.5:
+        preds = round(float(img_grads_np[0]) * 100, 3)
+        return {"label": "REAL", "confidence": preds}
     else:
-        preds = round(max_value*100, 3)
-        text2 = f"The image is FAKE."
-
-    return text2
+        preds = round(float(img_grads_np[1]) * 100, 3)
+        return {"label": "FAKE", "confidence": preds}
 
 
-def preprocess_video(input_video, n_frames = 5):
+def preprocess_video(input_video, n_frames=8):
     v_cap = cv2.VideoCapture(input_video)
+    if not v_cap.isOpened():
+        raise ValueError(f"Cannot open video file: {input_video}. Check codec/format.")
+
     v_len = int(v_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if v_len <= 0:
+        # Some codecs don't report frame count; read until end
+        v_len = 9999
 
-    # Pick 'n_frames' evenly spaced frames to sample
-    if n_frames is None:
-        sample = np.arange(0, v_len)
-    else:
-        sample = np.linspace(0, v_len - 1, n_frames).astype(int)
+    # Pick evenly-spaced frame indices to sample
+    actual_n = min(n_frames, v_len)
+    sample = set(np.linspace(0, max(v_len - 1, 0), actual_n).astype(int).tolist())
 
-    #Loop through frames.
     frames = []
-    for j in range(v_len):
-        success = v_cap.grab()
+    j = 0
+    while True:
+        success, frame = v_cap.read()
+        if not success:
+            break
         if j in sample:
-            # Load frame
-            success, frame = v_cap.retrieve()
-            if not success:
-                continue
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = preprocess_img(frame)
-            frames.append(frame)
+            try:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = preprocess_img(frame)
+                frames.append(frame)
+            except Exception:
+                pass
+        j += 1
+
     v_cap.release()
+
+    if not frames:
+        raise ValueError("No frames could be extracted from the video.")
+
     return frames
 
 
 def deepfakes_video_predict(input_video):
     '''Perform inference on a video.'''
     video_frames = preprocess_video(input_video)
-
-    real_grads = []
-    fake_grads = []
+    real_faces_list = []
+    fake_faces_list = []
 
     for face in video_frames:
-        img_grads = img_model.forward(face)
-        multimodal_grads = multimodal.clf_rgb[0].forward(img_grads)
+        try:
+            img_grads = img_model.forward(face)
+            img_grads = img_grads.cpu().detach().numpy()
+            img_grads_np = np.squeeze(img_grads)
+            if img_grads_np.ndim == 0 or img_grads_np.size < 2:
+                continue
+            real_faces_list.append(float(img_grads_np[0]))
+            fake_faces_list.append(float(img_grads_np[1]))
+        except Exception:
+            continue
 
-        out = nn.Softmax()(multimodal_grads)
-        real_grads.append(out.cpu().detach().numpy()[0])
-        print(f"Video out tensor shape is: {out.shape}, {out}")
+    if not real_faces_list:
+        return {"label": "FAKE", "confidence": 50.0}
 
-        fake_grads.append(out.cpu().detach().numpy()[0])
+    real_faces_mean = float(np.mean(real_faces_list))
+    fake_faces_mean = float(np.mean(fake_faces_list))
 
-    real_grads_mean = np.mean(real_grads)
-    fake_grads_mean = np.mean(fake_grads)
-
-    if real_grads_mean > fake_grads_mean:
-        res = round(real_grads_mean * 100, 3)
-        text = f"The video is REAL."
+    if real_faces_mean > 0.5:
+        preds = round(real_faces_mean * 100, 3)
+        return {"label": "REAL", "confidence": preds}
     else:
-        res = round(100 - (real_grads_mean * 100), 3)
-        text = f"The video is FAKE."
-    return text
+        preds = round(fake_faces_mean * 100, 3)
+        return {"label": "FAKE", "confidence": preds}
 
